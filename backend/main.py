@@ -5,7 +5,6 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-import joblib
 import tempfile
 import pdfplumber
 from pdf2image import convert_from_path
@@ -15,7 +14,7 @@ from dotenv import load_dotenv
 import easyocr
 import numpy as np
 import base64
-import pandas as pd
+# import pandas as pd
 import google.generativeai as genai
 
 
@@ -105,13 +104,13 @@ def pdf_to_base64(file_path: str) -> str:
     return base64.b64encode(pdf_data).decode('utf-8')
 
 # --- Load Local ML Model ---
-MODEL_PATH = "resume_score_model.joblib"
-local_model = None
-if os.path.exists(MODEL_PATH):
-    local_model = joblib.load(MODEL_PATH)
-    print("✅ Local resume scoring model loaded")
-else:
-    print("⚠️ Local resume scoring model not found")
+# MODEL_PATH = "resume_score_model.joblib"
+# local_model = None
+# if os.path.exists(MODEL_PATH):
+#     local_model = joblib.load(MODEL_PATH)
+#     print("✅ Local resume scoring model loaded")
+# else:
+#     print("⚠️ Local resume scoring model not found")
 
 # --- Local Resume Scoring Fallback ---
 def get_local_resume_score(file_path: str):
@@ -151,29 +150,29 @@ def get_local_resume_score(file_path: str):
     }
 
 # --- Local ML Model Scoring ---
-def get_local_model_score(file_path: str):
-    if not local_model:
-        return get_local_resume_score(file_path)
+# def get_local_model_score(file_path: str):
+#     if not local_model:
+#         return get_local_resume_score(file_path)
 
-    text = extract_text_from_pdf(file_path)
-    try:
-        # Prepare a DataFrame with proper structure
-        input_df = pd.DataFrame([{
-            'Resume_Text': text,
-            'Education': '',
-            'Job_Title': '',
-            'Experience_Years': 0
-        }])
-        score = local_model.predict(input_df)[0] * 10  # scale to 100
-        score = max(0, min(100, score))
-        return {
-            "score": round(score, 1),
-            "note": "Scored via local ML model",
-            "text_length": len(text)
-        }
-    except Exception as e:
-        print(f"Local ML model scoring failed: {e}")
-        return get_local_resume_score(file_path)
+#     text = extract_text_from_pdf(file_path)
+#     try:
+#         # Prepare a DataFrame with proper structure
+#         input_df = pd.DataFrame([{
+#             'Resume_Text': text,
+#             'Education': '',
+#             'Job_Title': '',
+#             'Experience_Years': 0
+#         }])
+#         score = local_model.predict(input_df)[0] * 10  # scale to 100
+#         score = max(0, min(100, score))
+#         return {
+#             "score": round(score, 1),
+#             "note": "Scored via local ML model",
+#             "text_length": len(text)
+#         }
+#     except Exception as e:
+#         print(f"Local ML model scoring failed: {e}")
+#         return get_local_resume_score(file_path)
 
 def get_resume_score(file_path: str):
     headers = {"Authorization": f"Bearer {MAGICAL_API_KEY}"}
@@ -188,8 +187,8 @@ def get_resume_score(file_path: str):
     except Exception as e:
         print(f"MagicalAPI via file.io failed: {e}")
 
-    # Fallback to local ML model
-    return get_local_model_score(file_path)
+    # Fallback to local scoring (without ML model)
+    return get_local_resume_score(file_path)
 
 # --- OpenAI Enhancement ---
 def enhance_resume_with_gemini(text: str, job_description: str = None):
@@ -198,12 +197,10 @@ def enhance_resume_with_gemini(text: str, job_description: str = None):
         prompt += f"\nTarget Job Description:\n{job_description}"
 
     try:
-        response = genai.chat.create(
-            model="gemini-1.5",
-            messages=[{"role": "user", "content": prompt}],
-            max_output_tokens=2000
-        )
-        return response.choices[0].content[0].text.strip()
+        # Updated Gemini API call
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
         print(f"Gemini API error: {e}")
         return text + "\n\n[Enhanced with Gemini API]"
@@ -226,10 +223,6 @@ def save_pdf(text: str, output_path: str):
         return True
     except Exception as e:
         print(f"PDF creation failed: {e}")
-        return False
-
-    except Exception as e:
-        print(f"PDF creation error: {e}")
         return False
 
 # --- FastAPI Endpoints ---
