@@ -3,54 +3,54 @@ import React, { useState, useRef } from 'react';
 import './ResumeOptimizer.css';
 
 interface SkillsAnalysis {
-  total_skills: number;
-  top_skills: string[];
-  skills_found: string[];
+  total_skills?: number;
+  top_skills?: string[];
+  skills_found?: string[];
 }
 
 interface ExperienceAnalysis {
-  total_years: number;
-  job_count: number;
-  recent_positions: Array<{
-    title: string;
-    company: string;
-    duration: string;
+  total_years?: number;
+  job_count?: number;
+  recent_positions?: Array<{
+    title?: string;
+    company?: string;
+    duration?: string;
   }>;
 }
 
 interface EducationAnalysis {
-  degree_count: number;
-  highest_degree: string | null;
-  institutions: string[];
+  degree_count?: number;
+  highest_degree?: string | null;
+  institutions?: string[];
 }
 
 interface ATSBreakdown {
-  sections_found: string[];
-  has_contact_info: boolean;
-  skills_analysis: SkillsAnalysis;
-  experience_analysis: ExperienceAnalysis;
-  education_analysis: EducationAnalysis;
+  sections_found?: string[];
+  has_contact_info?: boolean;
+  skills_analysis?: SkillsAnalysis;
+  experience_analysis?: ExperienceAnalysis;
+  education_analysis?: EducationAnalysis;
 }
 
 interface ResumeAnalysis {
-  name: string | null;
-  email: string | null;
-  phone: string | null;
-  experience_years: number;
-  education_count: number;
-  experience_count: number;
-  skills_count: number;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  experience_years?: number;
+  education_count?: number;
+  experience_count?: number;
+  skills_count?: number;
 }
 
 interface AnalysisResponse {
-  success: boolean;
-  ats_score: number;
-  score_provider: string;
-  resume_analysis: ResumeAnalysis;
-  ats_breakdown: ATSBreakdown;
-  ai_recommendations_available: boolean;
-  analysis_report_url: string | null;
-  note: string;
+  success?: boolean;
+  ats_score?: number;
+  score_provider?: string;
+  resume_analysis?: ResumeAnalysis;
+  ats_breakdown?: ATSBreakdown;
+  ai_recommendations_available?: boolean;
+  analysis_report_url?: string | null;
+  note?: string;
 }
 
 const ResumeOptimizer: React.FC = () => {
@@ -119,7 +119,6 @@ const ResumeOptimizer: React.FC = () => {
         });
       }, 500);
 
-      // Updated endpoint to match your FastAPI backend
       const response = await fetch('https://oll-assignment.onrender.com/analyze_resume/', {
         method: 'POST',
         body: formData,
@@ -157,25 +156,31 @@ const ResumeOptimizer: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const getScoreColor = (score: number) => {
+  const getScoreColor = (score: number = 0) => {
     if (score >= 80) return '#10b981';
     if (score >= 60) return '#f59e0b';
     return '#ef4444';
   };
 
-  const getScoreMessage = (score: number) => {
+  const getScoreMessage = (score: number = 0) => {
     if (score >= 80) return 'Excellent ATS Score!';
     if (score >= 70) return 'Good ATS Score';
     if (score >= 60) return 'Fair ATS Score';
     return 'Needs ATS Optimization';
   };
 
-  const getScoreLevel = (score: number) => {
+  const getScoreLevel = (score: number = 0) => {
     if (score >= 80) return 'Excellent';
     if (score >= 70) return 'Good';
     if (score >= 60) return 'Fair';
     return 'Poor';
   };
+
+  // Safe array access helpers
+  const safeSectionsFound = result?.ats_breakdown?.sections_found || [];
+  const safeTopSkills = result?.ats_breakdown?.skills_analysis?.top_skills || [];
+  const safeRecentPositions = result?.ats_breakdown?.experience_analysis?.recent_positions || [];
+  const safeInstitutions = result?.ats_breakdown?.education_analysis?.institutions || [];
 
   return (
     <div className="resume-optimizer">
@@ -254,11 +259,11 @@ const ResumeOptimizer: React.FC = () => {
             <div className="main-score-card">
               <div className="score-header">
                 <h2>ATS Resume Score</h2>
-                <span className="score-provider">Powered by {result.score_provider}</span>
+                <span className="score-provider">Powered by {result.score_provider || 'Affinda API'}</span>
               </div>
               <div className="main-score-display">
                 <div className="score-circle-large" style={{ borderColor: getScoreColor(result.ats_score) }}>
-                  <span className="score-value-large">{result.ats_score}</span>
+                  <span className="score-value-large">{result.ats_score || 0}</span>
                   <span className="score-label">/ 100</span>
                 </div>
                 <div className="score-info">
@@ -266,7 +271,7 @@ const ResumeOptimizer: React.FC = () => {
                     {getScoreLevel(result.ats_score)}
                   </h3>
                   <p className="score-message">{getScoreMessage(result.ats_score)}</p>
-                  <p className="score-note">{result.note}</p>
+                  <p className="score-note">{result.note || 'Analysis complete'}</p>
                 </div>
               </div>
             </div>
@@ -277,27 +282,27 @@ const ResumeOptimizer: React.FC = () => {
               <div className="overview-grid">
                 <div className="overview-item">
                   <span className="overview-label">Name</span>
-                  <span className="overview-value">{result.resume_analysis.name || 'Not detected'}</span>
+                  <span className="overview-value">{result.resume_analysis?.name || 'Not detected'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Email</span>
-                  <span className="overview-value">{result.resume_analysis.email || 'Not detected'}</span>
+                  <span className="overview-value">{result.resume_analysis?.email || 'Not detected'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Phone</span>
-                  <span className="overview-value">{result.resume_analysis.phone || 'Not detected'}</span>
+                  <span className="overview-value">{result.resume_analysis?.phone || 'Not detected'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Experience</span>
-                  <span className="overview-value">{result.resume_analysis.experience_years} years</span>
+                  <span className="overview-value">{result.resume_analysis?.experience_years || 0} years</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Education</span>
-                  <span className="overview-value">{result.resume_analysis.education_count} entries</span>
+                  <span className="overview-value">{result.resume_analysis?.education_count || 0} entries</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Skills</span>
-                  <span className="overview-value">{result.resume_analysis.skills_count} identified</span>
+                  <span className="overview-value">{result.resume_analysis?.skills_count || 0} identified</span>
                 </div>
               </div>
             </div>
@@ -310,11 +315,11 @@ const ResumeOptimizer: React.FC = () => {
               <div className="breakdown-category">
                 <h4>Resume Sections</h4>
                 <div className="sections-list">
-                  {result.ats_breakdown.sections_found.map((section, index) => (
+                  {safeSectionsFound.map((section, index) => (
                     <span key={index} className="section-tag present">✓ {section}</span>
                   ))}
                   {['education', 'experience', 'skills'].filter(section => 
-                    !result.ats_breakdown.sections_found.includes(section)
+                    !safeSectionsFound.includes(section)
                   ).map((section, index) => (
                     <span key={index} className="section-tag missing">✗ {section}</span>
                   ))}
@@ -324,17 +329,17 @@ const ResumeOptimizer: React.FC = () => {
               {/* Contact Info */}
               <div className="breakdown-category">
                 <h4>Contact Information</h4>
-                <span className={`status ${result.ats_breakdown.has_contact_info ? 'present' : 'missing'}`}>
-                  {result.ats_breakdown.has_contact_info ? '✓ Complete' : '✗ Incomplete'}
+                <span className={`status ${result.ats_breakdown?.has_contact_info ? 'present' : 'missing'}`}>
+                  {result.ats_breakdown?.has_contact_info ? '✓ Complete' : '✗ Incomplete'}
                 </span>
               </div>
 
               {/* Skills Analysis */}
               <div className="breakdown-category">
                 <h4>Skills Analysis</h4>
-                <p><strong>{result.ats_breakdown.skills_analysis.total_skills}</strong> skills detected</p>
+                <p><strong>{result.ats_breakdown?.skills_analysis?.total_skills || 0}</strong> skills detected</p>
                 <div className="skills-list">
-                  {result.ats_breakdown.skills_analysis.top_skills.map((skill, index) => (
+                  {safeTopSkills.map((skill, index) => (
                     <span key={index} className="skill-tag">{skill}</span>
                   ))}
                 </div>
@@ -343,12 +348,12 @@ const ResumeOptimizer: React.FC = () => {
               {/* Experience Analysis */}
               <div className="breakdown-category">
                 <h4>Experience</h4>
-                <p><strong>{result.ats_breakdown.experience_analysis.job_count}</strong> positions • <strong>{result.ats_breakdown.experience_analysis.total_years}</strong> years</p>
-                {result.ats_breakdown.experience_analysis.recent_positions.length > 0 && (
+                <p><strong>{result.ats_breakdown?.experience_analysis?.job_count || 0}</strong> positions • <strong>{result.ats_breakdown?.experience_analysis?.total_years || 0}</strong> years</p>
+                {safeRecentPositions.length > 0 && (
                   <div className="positions-list">
-                    {result.ats_breakdown.experience_analysis.recent_positions.map((position, index) => (
+                    {safeRecentPositions.map((position, index) => (
                       <div key={index} className="position-item">
-                        <strong>{position.title}</strong> at {position.company}
+                        <strong>{position.title || 'Unknown'}</strong> at {position.company || 'Unknown'}
                         {position.duration && <span> • {position.duration}</span>}
                       </div>
                     ))}
@@ -359,13 +364,13 @@ const ResumeOptimizer: React.FC = () => {
               {/* Education Analysis */}
               <div className="breakdown-category">
                 <h4>Education</h4>
-                <p><strong>{result.ats_breakdown.education_analysis.degree_count}</strong> degrees found</p>
-                {result.ats_breakdown.education_analysis.highest_degree && (
+                <p><strong>{result.ats_breakdown?.education_analysis?.degree_count || 0}</strong> degrees found</p>
+                {result.ats_breakdown?.education_analysis?.highest_degree && (
                   <p>Highest: {result.ats_breakdown.education_analysis.highest_degree}</p>
                 )}
-                {result.ats_breakdown.education_analysis.institutions.length > 0 && (
+                {safeInstitutions.length > 0 && (
                   <div className="institutions-list">
-                    {result.ats_breakdown.education_analysis.institutions.map((institution, index) => (
+                    {safeInstitutions.map((institution, index) => (
                       <span key={index} className="institution-tag">{institution}</span>
                     ))}
                   </div>
