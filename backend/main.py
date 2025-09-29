@@ -5,7 +5,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from openai import OpenAI
+
 import tempfile
 import pdfplumber
 from pdf2image import convert_from_path
@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 import easyocr
 import numpy as np
 import base64
-import joblib
 import pandas as pd
 import google.generativeai as genai
 
@@ -25,7 +24,6 @@ load_dotenv("config.env")
 
 # --- Config ---
 MAGICAL_API_KEY = os.getenv("MAGICAL_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MAGICAL_API_URL = "https://api.magicalapi.com/v1/resume/score"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
