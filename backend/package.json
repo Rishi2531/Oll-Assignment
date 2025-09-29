@@ -1,0 +1,8 @@
+{
+  "name": "resume-optimizer-backend",
+  "version": "1.0.0",
+  "description": "FastAPI backend for resume optimizer",
+  "scripts": {
+    "start": "uvicorn main:app --host 0.0.0.0 --port $PORT"
+  }
+}
