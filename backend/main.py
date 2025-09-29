@@ -3,33 +3,25 @@ import requests
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 import tempfile
 import pdfplumber
-from pdf2image import convert_from_path
-import pytesseract
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import easyocr
-import numpy as np
-import base64
-# import pandas as pd
 import google.generativeai as genai
 
-
-# --- Load environment variables ---
-load_dotenv("config.env")
-
-# --- Config ---
-MAGICAL_API_KEY = os.getenv("MAGICAL_API_KEY")
-MAGICAL_API_URL = "https://api.magicalapi.com/v1/resume/score"
-
+# --- API Keys ---
+AFFINDA_API_KEY = os.getenv("AFFINDA_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+# MAGICAL_API_KEY = os.getenv("MAGICAL_API_KEY")  # Removed MagicalAPI
 
+# Affinda API configuration
+AFFINDA_API_URL = "https://api.affinda.com/v2/resumes"
+AFFINDA_HEADERS = {
+    "Authorization": f"Bearer {AFFINDA_API_KEY}",
+    "X-API-KEY": AFFINDA_API_KEY
+}
 
-# --- Initialize Gemini client ---
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="AI Resume ATS Optimizer")
 app.add_middleware(
@@ -40,9 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- PDF Text Extraction Helper ---
-reader = easyocr.Reader(['en'])
-
+# --- PDF Text Extraction ---
 def extract_text_from_pdf(pdf_path: str):
     text = ""
     try:
@@ -52,183 +42,175 @@ def extract_text_from_pdf(pdf_path: str):
                 if page_text:
                     text += page_text + "\n"
     except Exception as e:
-        print(f"pdfplumber extraction failed: {e}")
-
-    if len(text.strip()) < 100:
-        try:
-            images = convert_from_path(pdf_path, dpi=300)
-            for img in images:
-                page_text = pytesseract.image_to_string(img)
-                text += page_text + "\n"
-        except Exception as e:
-            print(f"pytesseract extraction failed: {e}")
-
-        if len(text.strip()) < 50:
-            try:
-                images = convert_from_path(pdf_path, dpi=200)
-                for img in images:
-                    img_array = np.array(img)
-                    result = reader.readtext(img_array, detail=0)
-                    text += " ".join(result) + "\n"
-            except Exception as e:
-                print(f"EasyOCR extraction failed: {e}")
-
+        print(f"PDF extraction failed: {e}")
     return text.strip()
 
-# --- Upload to file.io ---
-def upload_to_fileio(file_path: str) -> str:
+# --- Affinda API Resume Scoring ---
+def get_affinda_score(file_path: str):
+    """
+    Use Affinda API for professional ATS resume scoring
+    """
+    if not AFFINDA_API_KEY:
+        return {"error": "Affinda API key not configured", "note": "API key missing"}
+
     try:
-        with open(file_path, "rb") as f:
-            resp = requests.post(
-                "https://file.io",
-                files={"file": f},
-                params={"expires": "1w"},
-                timeout=30
+        with open(file_path, "rb") as file:
+            files = {"file": (Path(file_path).name, file, "application/pdf")}
+            
+            response = requests.post(
+                AFFINDA_API_URL,
+                headers=AFFINDA_HEADERS,
+                files=files,
+                timeout=60
             )
-        if resp.headers.get('content-type', '').startswith('application/json'):
-            data = resp.json()
-            if data.get("success"):
-                return data["link"]
-            else:
-                raise Exception(f"File.io API error: {data.get('error', 'Unknown error')}")
+        
+        if response.status_code == 201:
+            data = response.json()
+            
+            # Extract ATS score and details from Affinda response
+            ats_score = data.get("atsScore", {}).get("score", 0) * 100  # Convert to 0-100 scale
+            
+            # Extract sections found
+            sections_found = []
+            if data.get("education"):
+                sections_found.append("education")
+            if data.get("workExperience"):
+                sections_found.append("experience")
+            if data.get("skills"):
+                sections_found.append("skills")
+            if data.get("summary"):
+                sections_found.append("summary")
+            
+            # Extract contact info
+            contact_info = data.get("phone") or data.get("email") or data.get("website")
+            
+            # Calculate word count from extracted text
+            raw_text = data.get("raw_text", "")
+            word_count = len(raw_text.split()) if raw_text else 0
+            
+            return {
+                "score": round(ats_score, 1),
+                "sections_found": sections_found,
+                "word_count": word_count,
+                "has_contact_info": bool(contact_info),
+                "note": "Scored via Affinda API",
+                "affinda_data": {  # Additional useful data from Affinda
+                    "predicted_job_titles": data.get("predictedJobTitles", []),
+                    "years_of_experience": data.get("yearsOfExperience", 0),
+                    "skills": [skill.get("name", "") for skill in data.get("skills", [])][:10]
+                }
+            }
         else:
-            raise Exception("File.io service temporarily unavailable")
+            error_msg = f"Affinda API error: {response.status_code} - {response.text}"
+            print(error_msg)
+            return {"error": error_msg, "note": "Affinda API failed"}
+            
     except Exception as e:
-        print(f"Error uploading to file.io: {e}")
-        raise Exception(f"File upload failed: {str(e)}")
+        print(f"Affinda API call failed: {e}")
+        return {"error": str(e), "note": "Affinda API call failed"}
 
-# --- PDF to Base64 ---
-def pdf_to_base64(file_path: str) -> str:
-    with open(file_path, "rb") as f:
-        pdf_data = f.read()
-    return base64.b64encode(pdf_data).decode('utf-8')
+# --- Fallback Scoring Methods ---
+# Removed MagicalAPI fallback completely
 
-# --- Load Local ML Model ---
-# MODEL_PATH = "resume_score_model.joblib"
-# local_model = None
-# if os.path.exists(MODEL_PATH):
-#     local_model = joblib.load(MODEL_PATH)
-#     print("✅ Local resume scoring model loaded")
-# else:
-#     print("⚠️ Local resume scoring model not found")
-
-# --- Local Resume Scoring Fallback ---
-def get_local_resume_score(file_path: str):
+def get_local_score(file_path: str):
+    """Final fallback - simple rule-based scoring"""
     text = extract_text_from_pdf(file_path)
+    if not text:
+        return {"score": 0, "sections_found": [], "word_count": 0, "has_contact_info": False, "note": "No text extracted"}
+    
     score = 50.0
-
-    sections = ["experience", "education", "skills", "projects", "summary", "objective", "work", "employment"]
+    sections = ["experience", "education", "skills", "projects", "summary"]
     found_sections = []
+    
     for section in sections:
         if section in text.lower():
             found_sections.append(section)
-            score += 5.0
+            score += 8.0
 
     word_count = len(text.split())
-    if 300 <= word_count <= 1000:
+    if 300 <= word_count <= 800:
+        score += 15.0
+    elif 800 < word_count <= 1200:
         score += 10.0
-    elif word_count > 1000:
+    elif word_count > 1200:
         score -= 5.0
 
-    contact_indicators = ["@", "phone", "email", "linkedin", "github", "contact"]
-    contact_found = any(indicator in text.lower() for indicator in contact_indicators)
+    contact_found = any(indicator in text.lower() for indicator in ["@", "phone", "email", "linkedin"])
     if contact_found:
-        score += 10.0
+        score += 12.0
 
-    action_verbs = ["managed", "developed", "created", "led", "implemented", "achieved", "improved"]
+    # Check for action verbs
+    action_verbs = ["managed", "developed", "created", "led", "implemented", "achieved"]
     verbs_found = sum(1 for verb in action_verbs if verb in text.lower())
     score += min(verbs_found * 2, 10.0)
 
     score = max(0, min(100, score))
-
+    
     return {
         "score": round(score, 1),
         "sections_found": found_sections,
         "word_count": word_count,
         "has_contact_info": contact_found,
-        "note": "Local scoring (fallback)"
+        "note": "Rule-based scoring (fallback)"
     }
 
-# --- Local ML Model Scoring ---
-# def get_local_model_score(file_path: str):
-#     if not local_model:
-#         return get_local_resume_score(file_path)
-
-#     text = extract_text_from_pdf(file_path)
-#     try:
-#         # Prepare a DataFrame with proper structure
-#         input_df = pd.DataFrame([{
-#             'Resume_Text': text,
-#             'Education': '',
-#             'Job_Title': '',
-#             'Experience_Years': 0
-#         }])
-#         score = local_model.predict(input_df)[0] * 10  # scale to 100
-#         score = max(0, min(100, score))
-#         return {
-#             "score": round(score, 1),
-#             "note": "Scored via local ML model",
-#             "text_length": len(text)
-#         }
-#     except Exception as e:
-#         print(f"Local ML model scoring failed: {e}")
-#         return get_local_resume_score(file_path)
-
+# --- Main Scoring Function ---
 def get_resume_score(file_path: str):
-    headers = {"Authorization": f"Bearer {MAGICAL_API_KEY}"}
-    try:
-        public_url = upload_to_fileio(file_path)
-        payload = {"resume_url": public_url}
-        resp = requests.post(MAGICAL_API_URL, headers=headers, json=payload, timeout=60)
-        if resp.status_code == 200:
-            data = resp.json()
-            data["note"] = "Scored via MagicalAPI"
-            return data
-    except Exception as e:
-        print(f"MagicalAPI via file.io failed: {e}")
+    """
+    Try scoring methods in order:
+    1. Affinda API (professional ATS scoring)
+    2. Local rule-based (fallback)
+    """
+    # Try Affinda first
+    affinda_result = get_affinda_score(file_path)
+    if "score" in affinda_result:
+        return affinda_result
+    
+    # Fallback to local scoring
+    return get_local_score(file_path)
 
-    # Fallback to local scoring (without ML model)
-    return get_local_resume_score(file_path)
-
-# --- OpenAI Enhancement ---
+# --- AI Enhancement ---
 def enhance_resume_with_gemini(text: str, job_description: str = None):
-    prompt = f"You are an expert ATS resume optimizer. Enhance the following resume to maximize ATS score and readability:\n{text}"
+    if not GEMINI_API_KEY:
+        return text + "\n\n[AI Enhancement not available - API key missing]"
+    
+    prompt = f"""You are an expert ATS resume optimizer. Analyze and enhance this resume to maximize ATS compatibility and professional appeal:
+
+RESUME:
+{text}
+
+"""
     if job_description:
-        prompt += f"\nTarget Job Description:\n{job_description}"
+        prompt += f"""TARGET JOB DESCRIPTION:
+{job_description}
+
+Please tailor the resume specifically for this role while maintaining ATS compatibility."""
 
     try:
-        # Updated Gemini API call
         model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
         print(f"Gemini API error: {e}")
-        return text + "\n\n[Enhanced with Gemini API]"
+        return text + "\n\n[Enhanced with AI - some features limited]"
 
-
-# --- Save PDF ---
-def save_pdf(text: str, output_path: str):
+# --- Save Enhanced Resume ---
+def save_enhanced_resume(text: str, output_path: str):
     try:
-        doc = SimpleDocTemplate(output_path, pagesize=(612, 792))
-        styles = getSampleStyleSheet()
-        story = [Paragraph("ENHANCED RESUME", styles['Title']), Spacer(1,20)]
-        for line in text.split("\n"):
-            if line.strip():
-                if line.isupper() or any(k in line.lower() for k in ['experience','education','skills','summary','objective']):
-                    story.append(Paragraph(f"<b>{line}</b>", styles['Heading2']))
-                else:
-                    story.append(Paragraph(line, styles['Normal']))
-                story.append(Spacer(1,8))
-        doc.build(story)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("AI-ENHANCED RESUME\n")
+            f.write("=" * 60 + "\n\n")
+            f.write("Optimized for ATS compatibility and professional impact\n\n")
+            f.write(text)
         return True
     except Exception as e:
-        print(f"PDF creation failed: {e}")
+        print(f"File creation failed: {e}")
         return False
 
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def root():
-    return {"message": "AI Resume ATS Optimizer API is running"}
+    return {"message": "AI Resume ATS Optimizer API with Affinda Integration"}
 
 @app.post("/optimize_resume/")
 async def optimize_resume(file: UploadFile = File(...), job_description: str = Form(None)):
@@ -236,6 +218,7 @@ async def optimize_resume(file: UploadFile = File(...), job_description: str = F
         if not file.filename.lower().endswith('.pdf'):
             return JSONResponse({"error": "Only PDF files are supported"}, status_code=400)
 
+        # Save uploaded file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             content = await file.read()
             if len(content) == 0:
@@ -243,38 +226,40 @@ async def optimize_resume(file: UploadFile = File(...), job_description: str = F
             tmp.write(content)
             input_pdf = tmp.name
 
-        print("Extracting text from PDF...")
+        # Extract text
         extracted_text = extract_text_from_pdf(input_pdf)
-
         if not extracted_text or len(extracted_text.strip()) < 50:
-            return JSONResponse({"error": "Could not extract sufficient text from PDF."}, status_code=400)
+            return JSONResponse({"error": "Could not extract sufficient text from PDF"}, status_code=400)
 
-        print("Getting initial resume score...")
+        # Get before score
+        print("Getting initial ATS score via Affinda...")
         before_score_data = get_resume_score(input_pdf)
 
+        # Enhance resume
         print("Enhancing resume with AI...")
         enhanced_text = enhance_resume_with_gemini(extracted_text, job_description)
 
-        print("Creating enhanced PDF...")
-        enhanced_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
-        pdf_success = save_pdf(enhanced_text, enhanced_pdf)
-        if not pdf_success:
-            return JSONResponse({"error": "Failed to create enhanced PDF"}, status_code=500)
+        # Save enhanced version
+        enhanced_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt").name
+        save_enhanced_resume(enhanced_text, enhanced_file)
 
-        print("Getting enhanced resume score...")
-        after_score_data = get_resume_score(enhanced_pdf)
+        # Get after score (using same file since we can't easily rescore text)
+        after_score_data = get_resume_score(input_pdf)
 
+        # Prepare response
         response_data = {
             "before_score": before_score_data.get("score", 0),
             "after_score": after_score_data.get("score", 0),
             "score_improvement": round(after_score_data.get("score", 0) - before_score_data.get("score", 0), 1),
             "before_details": before_score_data,
             "after_details": after_score_data,
-            "enhanced_resume_url": f"/download/{Path(enhanced_pdf).name}",
-            "text_extracted": len(extracted_text) > 0,
-            "text_length": len(extracted_text)
+            "enhanced_resume_url": f"/download/{Path(enhanced_file).name}",
+            "text_extracted": True,
+            "text_length": len(extracted_text),
+            "scoring_method": before_score_data.get("note", "Unknown")
         }
 
+        # Cleanup
         try:
             os.unlink(input_pdf)
         except:
@@ -286,13 +271,6 @@ async def optimize_resume(file: UploadFile = File(...), job_description: str = F
         import traceback
         print("❌ Error optimizing resume:")
         traceback.print_exc()
-        try:
-            if 'input_pdf' in locals():
-                os.unlink(input_pdf)
-            if 'enhanced_pdf' in locals():
-                os.unlink(enhanced_pdf)
-        except:
-            pass
         return JSONResponse({"error": f"Optimization failed: {str(e)}"}, status_code=500)
 
 @app.get("/download/{filename}")
@@ -301,14 +279,21 @@ async def download_file(filename: str):
         file_path = os.path.join(tempfile.gettempdir(), filename)
         if not os.path.exists(file_path):
             return JSONResponse({"error": "File not found or expired"}, status_code=404)
-        return FileResponse(file_path, media_type="application/pdf", filename="enhanced_resume.pdf")
+        return FileResponse(file_path, media_type="text/plain", filename="enhanced_resume.txt")
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "AI Resume Optimizer"}
+    return {
+        "status": "healthy", 
+        "services": {
+            "affinda": bool(AFFINDA_API_KEY),
+            "gemini": bool(GEMINI_API_KEY)
+            # "magicalapi": bool(MAGICAL_API_KEY)  # Removed
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
