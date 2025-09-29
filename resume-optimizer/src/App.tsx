@@ -2,36 +2,67 @@
 import React, { useState, useRef } from 'react';
 import './ResumeOptimizer.css';
 
-interface ResumeScore {
-  score: number;
-  sections_found?: string[];
-  word_count?: number;
-  has_contact_info?: boolean;
-  note?: string; // Scoring source
+interface SkillsAnalysis {
+  total_skills: number;
+  top_skills: string[];
+  skills_found: string[];
 }
 
-interface OptimizationResponse {
-  before_score: number;
-  after_score: number;
-  score_improvement: number;
-  before_details: ResumeScore;
-  after_details: ResumeScore;
-  enhanced_resume_url: string;
-  text_extracted: boolean;
-  text_length: number;
+interface ExperienceAnalysis {
+  total_years: number;
+  job_count: number;
+  recent_positions: Array<{
+    title: string;
+    company: string;
+    duration: string;
+  }>;
+}
+
+interface EducationAnalysis {
+  degree_count: number;
+  highest_degree: string | null;
+  institutions: string[];
+}
+
+interface ATSBreakdown {
+  sections_found: string[];
+  has_contact_info: boolean;
+  skills_analysis: SkillsAnalysis;
+  experience_analysis: ExperienceAnalysis;
+  education_analysis: EducationAnalysis;
+}
+
+interface ResumeAnalysis {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  experience_years: number;
+  education_count: number;
+  experience_count: number;
+  skills_count: number;
+}
+
+interface AnalysisResponse {
+  success: boolean;
+  ats_score: number;
+  score_provider: string;
+  resume_analysis: ResumeAnalysis;
+  ats_breakdown: ATSBreakdown;
+  ai_recommendations_available: boolean;
+  analysis_report_url: string | null;
+  note: string;
 }
 
 const ResumeOptimizer: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [jobDescription, setJobDescription] = useState('');
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [result, setResult] = useState<OptimizationResponse | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fix: Browser-friendly interval ref
   const progressIntervalRef = useRef<number | null>(null);
 
   const handleDrag = (e: React.DragEvent) => {
@@ -62,13 +93,13 @@ const ResumeOptimizer: React.FC = () => {
     }
   };
 
-  const handleOptimize = async () => {
+  const handleAnalyze = async () => {
     if (!file) {
       setError('Please select a PDF file');
       return;
     }
 
-    setIsOptimizing(true);
+    setIsAnalyzing(true);
     setError('');
     setUploadProgress(0);
 
@@ -77,7 +108,7 @@ const ResumeOptimizer: React.FC = () => {
       formData.append('file', file);
       if (jobDescription) formData.append('job_description', jobDescription);
 
-      // Browser-friendly interval for upload progress simulation
+      // Upload progress simulation
       progressIntervalRef.current = window.setInterval(() => {
         setUploadProgress(prev => {
           if (prev >= 90) {
@@ -88,7 +119,8 @@ const ResumeOptimizer: React.FC = () => {
         });
       }, 500);
 
-      const response = await fetch('https://oll-assignment.onrender.com/optimize_resume/', {
+      // Updated endpoint to match your FastAPI backend
+      const response = await fetch('https://oll-assignment.onrender.com/analyze_resume/', {
         method: 'POST',
         body: formData,
       });
@@ -98,22 +130,22 @@ const ResumeOptimizer: React.FC = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Optimization failed');
+        throw new Error(errorData.error || 'Analysis failed');
       }
 
-      const data: OptimizationResponse = await response.json();
+      const data: AnalysisResponse = await response.json();
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setIsOptimizing(false);
+      setIsAnalyzing(false);
       setUploadProgress(0);
     }
   };
 
-  const downloadEnhancedResume = () => {
-    if (result?.enhanced_resume_url) {
-      window.open(`https://oll-assignment.onrender.com${result.enhanced_resume_url}`, '_blank');
+  const downloadAnalysisReport = () => {
+    if (result?.analysis_report_url) {
+      window.open(`https://oll-assignment.onrender.com${result.analysis_report_url}`, '_blank');
     }
   };
 
@@ -132,17 +164,25 @@ const ResumeOptimizer: React.FC = () => {
   };
 
   const getScoreMessage = (score: number) => {
-    if (score >= 80) return 'Excellent!';
-    if (score >= 60) return 'Good, but can be improved';
-    return 'Needs significant improvement';
+    if (score >= 80) return 'Excellent ATS Score!';
+    if (score >= 70) return 'Good ATS Score';
+    if (score >= 60) return 'Fair ATS Score';
+    return 'Needs ATS Optimization';
+  };
+
+  const getScoreLevel = (score: number) => {
+    if (score >= 80) return 'Excellent';
+    if (score >= 70) return 'Good';
+    if (score >= 60) return 'Fair';
+    return 'Poor';
   };
 
   return (
     <div className="resume-optimizer">
       <div className="container">
         <header className="header">
-          <h1>AI Resume ATS Optimizer</h1>
-          <p>Upload your resume to get an ATS score and AI-powered optimization</p>
+          <h1>AI Resume ATS Analyzer</h1>
+          <p>Get professional ATS scoring and optimization recommendations powered by Affinda API</p>
         </header>
 
         {!result ? (
@@ -187,101 +227,176 @@ const ResumeOptimizer: React.FC = () => {
                 id="job-description"
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Paste the job description here for targeted optimization..."
+                placeholder="Paste the job description here for targeted optimization recommendations..."
                 rows={4}
               />
+              <p className="helper-text">Adding a job description will provide tailored optimization suggestions</p>
             </div>
 
             {error && <div className="error-message">⚠️ {error}</div>}
 
-            <button onClick={handleOptimize} disabled={!file || isOptimizing} className="optimize-btn">
-              {isOptimizing ? 'Optimizing...' : 'Optimize Resume'}
+            <button onClick={handleAnalyze} disabled={!file || isAnalyzing} className="analyze-btn">
+              {isAnalyzing ? 'Analyzing...' : 'Analyze Resume ATS Score'}
             </button>
 
-            {isOptimizing && (
+            {isAnalyzing && (
               <div className="progress-section">
                 <div className="progress-bar">
                   <div className="progress-fill" style={{ width: `${uploadProgress}%` }}></div>
                 </div>
-                <p>Analyzing and optimizing your resume...</p>
+                <p>Parsing resume with Affinda API...</p>
               </div>
             )}
           </div>
         ) : (
           <div className="results-section">
-            <div className="score-comparison">
-              <div className="score-card before-score">
-                <h3>Before Optimization</h3>
-                <div className="score-circle" style={{ borderColor: getScoreColor(result.before_score) }}>
-                  <span className="score-value">{result.before_score}</span>
-                  <span className="score-label">ATS Score</span>
-                </div>
-                <p className="score-message">{getScoreMessage(result.before_score)}</p>
-                <p className="score-source">Scored via: {result.before_details.note}</p>
+            {/* Main Score Card */}
+            <div className="main-score-card">
+              <div className="score-header">
+                <h2>ATS Resume Score</h2>
+                <span className="score-provider">Powered by {result.score_provider}</span>
               </div>
-
-              <div className="improvement-arrow">→</div>
-
-              <div className="score-card after-score">
-                <h3>After Optimization</h3>
-                <div className="score-circle" style={{ borderColor: getScoreColor(result.after_score) }}>
-                  <span className="score-value">{result.after_score}</span>
-                  <span className="score-label">ATS Score</span>
+              <div className="main-score-display">
+                <div className="score-circle-large" style={{ borderColor: getScoreColor(result.ats_score) }}>
+                  <span className="score-value-large">{result.ats_score}</span>
+                  <span className="score-label">/ 100</span>
                 </div>
-                <p className="score-message">{getScoreMessage(result.after_score)}</p>
-                <p className="score-source">Scored via: {result.after_details.note}</p>
+                <div className="score-info">
+                  <h3 className="score-level" style={{ color: getScoreColor(result.ats_score) }}>
+                    {getScoreLevel(result.ats_score)}
+                  </h3>
+                  <p className="score-message">{getScoreMessage(result.ats_score)}</p>
+                  <p className="score-note">{result.note}</p>
+                </div>
               </div>
             </div>
 
-            <div className="improvement-stats">
-              <div className="stat-item">
-                <span className="stat-value" style={{ color: result.score_improvement >= 0 ? '#10b981' : '#ef4444' }}>
-                  {result.score_improvement >= 0 ? '+' : ''}{result.score_improvement}
+            {/* Resume Overview */}
+            <div className="resume-overview">
+              <h3>Resume Overview</h3>
+              <div className="overview-grid">
+                <div className="overview-item">
+                  <span className="overview-label">Name</span>
+                  <span className="overview-value">{result.resume_analysis.name || 'Not detected'}</span>
+                </div>
+                <div className="overview-item">
+                  <span className="overview-label">Email</span>
+                  <span className="overview-value">{result.resume_analysis.email || 'Not detected'}</span>
+                </div>
+                <div className="overview-item">
+                  <span className="overview-label">Phone</span>
+                  <span className="overview-value">{result.resume_analysis.phone || 'Not detected'}</span>
+                </div>
+                <div className="overview-item">
+                  <span className="overview-label">Experience</span>
+                  <span className="overview-value">{result.resume_analysis.experience_years} years</span>
+                </div>
+                <div className="overview-item">
+                  <span className="overview-label">Education</span>
+                  <span className="overview-value">{result.resume_analysis.education_count} entries</span>
+                </div>
+                <div className="overview-item">
+                  <span className="overview-label">Skills</span>
+                  <span className="overview-value">{result.resume_analysis.skills_count} identified</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ATS Breakdown */}
+            <div className="breakdown-section">
+              <h3>ATS Breakdown</h3>
+              
+              {/* Sections Found */}
+              <div className="breakdown-category">
+                <h4>Resume Sections</h4>
+                <div className="sections-list">
+                  {result.ats_breakdown.sections_found.map((section, index) => (
+                    <span key={index} className="section-tag present">✓ {section}</span>
+                  ))}
+                  {['education', 'experience', 'skills'].filter(section => 
+                    !result.ats_breakdown.sections_found.includes(section)
+                  ).map((section, index) => (
+                    <span key={index} className="section-tag missing">✗ {section}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Contact Info */}
+              <div className="breakdown-category">
+                <h4>Contact Information</h4>
+                <span className={`status ${result.ats_breakdown.has_contact_info ? 'present' : 'missing'}`}>
+                  {result.ats_breakdown.has_contact_info ? '✓ Complete' : '✗ Incomplete'}
                 </span>
-                <span className="stat-label">Score Improvement</span>
               </div>
-              <div className="stat-item">
-                <span className="stat-value">{result.before_details.word_count || 'N/A'}</span>
-                <span className="stat-label">Words (Before)</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-value">{result.text_length}</span>
-                <span className="stat-label">Characters Extracted</span>
-              </div>
-            </div>
 
-            <div className="details-section">
-              <div className="details-grid">
-                <div className="detail-item">
-                  <h4>Sections Found</h4>
-                  <div className="sections-list">
-                    {(result.before_details.sections_found || []).map((section, index) => (
-                      <span key={index} className="section-tag">{section}</span>
+              {/* Skills Analysis */}
+              <div className="breakdown-category">
+                <h4>Skills Analysis</h4>
+                <p><strong>{result.ats_breakdown.skills_analysis.total_skills}</strong> skills detected</p>
+                <div className="skills-list">
+                  {result.ats_breakdown.skills_analysis.top_skills.map((skill, index) => (
+                    <span key={index} className="skill-tag">{skill}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Experience Analysis */}
+              <div className="breakdown-category">
+                <h4>Experience</h4>
+                <p><strong>{result.ats_breakdown.experience_analysis.job_count}</strong> positions • <strong>{result.ats_breakdown.experience_analysis.total_years}</strong> years</p>
+                {result.ats_breakdown.experience_analysis.recent_positions.length > 0 && (
+                  <div className="positions-list">
+                    {result.ats_breakdown.experience_analysis.recent_positions.map((position, index) => (
+                      <div key={index} className="position-item">
+                        <strong>{position.title}</strong> at {position.company}
+                        {position.duration && <span> • {position.duration}</span>}
+                      </div>
                     ))}
                   </div>
-                </div>
-                <div className="detail-item">
-                  <h4>Contact Info</h4>
-                  <span className={`status ${result.before_details.has_contact_info ? 'present' : 'missing'}`}>
-                    {result.before_details.has_contact_info ? '✓ Present' : '✗ Missing'}
-                  </span>
-                </div>
-                <div className="detail-item">
-                  <h4>Optimization Note</h4>
-                  <p>{result.after_details.note || 'Enhanced with AI optimization'}</p>
-                </div>
+                )}
+              </div>
+
+              {/* Education Analysis */}
+              <div className="breakdown-category">
+                <h4>Education</h4>
+                <p><strong>{result.ats_breakdown.education_analysis.degree_count}</strong> degrees found</p>
+                {result.ats_breakdown.education_analysis.highest_degree && (
+                  <p>Highest: {result.ats_breakdown.education_analysis.highest_degree}</p>
+                )}
+                {result.ats_breakdown.education_analysis.institutions.length > 0 && (
+                  <div className="institutions-list">
+                    {result.ats_breakdown.education_analysis.institutions.map((institution, index) => (
+                      <span key={index} className="institution-tag">{institution}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
+            {/* AI Recommendations */}
+            {result.ai_recommendations_available && (
+              <div className="ai-recommendations">
+                <h3>🤖 AI Optimization Recommendations</h3>
+                <p>Download the full analysis report for detailed AI-powered optimization suggestions to improve your ATS score.</p>
+              </div>
+            )}
+
+            {/* Action Buttons */}
             <div className="action-buttons">
-              <button onClick={downloadEnhancedResume} className="download-btn">📥 Download Enhanced Resume</button>
-              <button onClick={resetForm} className="new-resume-btn">🔄 Optimize Another Resume</button>
+              {result.analysis_report_url && (
+                <button onClick={downloadAnalysisReport} className="download-btn">
+                  📊 Download Full Analysis Report
+                </button>
+              )}
+              <button onClick={resetForm} className="new-resume-btn">
+                🔄 Analyze Another Resume
+              </button>
             </div>
           </div>
         )}
 
         <footer className="footer">
-          <p>Powered by AI • Secure PDF processing • ATS-optimized results</p>
+          <p>Powered by Affinda API & Gemini AI • Professional ATS Scoring • Secure Processing</p>
         </footer>
       </div>
     </div>

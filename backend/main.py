@@ -7,21 +7,24 @@ import tempfile
 import pdfplumber
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
+from dotenv import load_dotenv  # Add this import
+
+# Load environment variables for local development
+load_dotenv()
 
 # --- API Keys ---
 AFFINDA_API_KEY = os.getenv("AFFINDA_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# MAGICAL_API_KEY = os.getenv("MAGICAL_API_KEY")  # Removed MagicalAPI
+
+# Configure Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # Affinda API configuration
 AFFINDA_API_URL = "https://api.affinda.com/v2/resumes"
 AFFINDA_HEADERS = {
     "Authorization": f"Bearer {AFFINDA_API_KEY}",
-    "X-API-KEY": AFFINDA_API_KEY
 }
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="AI Resume ATS Optimizer")
 app.add_middleware(
@@ -45,13 +48,14 @@ def extract_text_from_pdf(pdf_path: str):
         print(f"PDF extraction failed: {e}")
     return text.strip()
 
-# --- Affinda API Resume Scoring ---
-def get_affinda_score(file_path: str):
+# --- Affinda API Resume Parsing with ATS Score ---
+def parse_resume_with_affinda(file_path: str):
     """
-    Use Affinda API for professional ATS resume scoring
+    Use Affinda API for professional resume parsing including ATS score
+    Returns the full parsed data from Affinda
     """
     if not AFFINDA_API_KEY:
-        return {"error": "Affinda API key not configured", "note": "API key missing"}
+        return {"error": "Affinda API key not configured"}
 
     try:
         with open(file_path, "rb") as file:
@@ -65,143 +69,203 @@ def get_affinda_score(file_path: str):
             )
         
         if response.status_code == 201:
-            data = response.json()
-            
-            # Extract ATS score and details from Affinda response
-            ats_score = data.get("atsScore", {}).get("score", 0) * 100  # Convert to 0-100 scale
-            
-            # Extract sections found
-            sections_found = []
-            if data.get("education"):
-                sections_found.append("education")
-            if data.get("workExperience"):
-                sections_found.append("experience")
-            if data.get("skills"):
-                sections_found.append("skills")
-            if data.get("summary"):
-                sections_found.append("summary")
-            
-            # Extract contact info
-            contact_info = data.get("phone") or data.get("email") or data.get("website")
-            
-            # Calculate word count from extracted text
-            raw_text = data.get("raw_text", "")
-            word_count = len(raw_text.split()) if raw_text else 0
-            
-            return {
-                "score": round(ats_score, 1),
-                "sections_found": sections_found,
-                "word_count": word_count,
-                "has_contact_info": bool(contact_info),
-                "note": "Scored via Affinda API",
-                "affinda_data": {  # Additional useful data from Affinda
-                    "predicted_job_titles": data.get("predictedJobTitles", []),
-                    "years_of_experience": data.get("yearsOfExperience", 0),
-                    "skills": [skill.get("name", "") for skill in data.get("skills", [])][:10]
-                }
-            }
+            return response.json()  # Return full Affinda response
         else:
             error_msg = f"Affinda API error: {response.status_code} - {response.text}"
             print(error_msg)
-            return {"error": error_msg, "note": "Affinda API failed"}
+            return {"error": error_msg}
             
     except Exception as e:
         print(f"Affinda API call failed: {e}")
-        return {"error": str(e), "note": "Affinda API call failed"}
+        return {"error": str(e)}
 
-# --- Fallback Scoring Methods ---
-# Removed MagicalAPI fallback completely
-
-def get_local_score(file_path: str):
-    """Final fallback - simple rule-based scoring"""
-    text = extract_text_from_pdf(file_path)
-    if not text:
-        return {"score": 0, "sections_found": [], "word_count": 0, "has_contact_info": False, "note": "No text extracted"}
+# --- Extract ATS Score from Affinda Response ---
+def extract_affinda_ats_score(affinda_data: dict):
+    """
+    Extract ATS score and detailed analysis from Affinda response
+    """
+    if "error" in affinda_data:
+        return {
+            "score": 0,
+            "note": "Affinda parsing failed",
+            "details": affinda_data
+        }
     
-    score = 50.0
-    sections = ["experience", "education", "skills", "projects", "summary"]
-    found_sections = []
+    # Get ATS score from Affinda (they provide it directly)
+    ats_score = affinda_data.get("atsScore", {})
+    raw_score = ats_score.get("score")
     
-    for section in sections:
-        if section in text.lower():
-            found_sections.append(section)
-            score += 8.0
-
-    word_count = len(text.split())
-    if 300 <= word_count <= 800:
-        score += 15.0
-    elif 800 < word_count <= 1200:
-        score += 10.0
-    elif word_count > 1200:
-        score -= 5.0
-
-    contact_found = any(indicator in text.lower() for indicator in ["@", "phone", "email", "linkedin"])
-    if contact_found:
-        score += 12.0
-
-    # Check for action verbs
-    action_verbs = ["managed", "developed", "created", "led", "implemented", "achieved"]
-    verbs_found = sum(1 for verb in action_verbs if verb in text.lower())
-    score += min(verbs_found * 2, 10.0)
-
-    score = max(0, min(100, score))
+    # Convert to 0-100 scale if needed
+    if raw_score is not None:
+        if raw_score <= 1.0:  # If score is 0-1 scale
+            score = round(raw_score * 100, 1)
+        else:
+            score = round(raw_score, 1)
+    else:
+        # Fallback: Calculate score based on data completeness
+        score = calculate_fallback_score(affinda_data)
+    
+    # Extract detailed analysis
+    sections_found = []
+    if affinda_data.get("education"):
+        sections_found.append("education")
+    if affinda_data.get("workExperience"):
+        sections_found.append("experience") 
+    if affinda_data.get("skills"):
+        sections_found.append("skills")
+    if affinda_data.get("summary"):
+        sections_found.append("summary")
+    
+    # Contact info
+    has_contact = bool(
+        affinda_data.get("emails") or 
+        affinda_data.get("phoneNumbers") or
+        affinda_data.get("websites")
+    )
+    
+    # Skills analysis
+    skills = affinda_data.get("skills", [])
+    skills_count = len(skills)
+    top_skills = [skill.get("name") for skill in skills[:10] if skill.get("name")]
+    
+    # Experience analysis
+    experience_years = affinda_data.get("totalYearsExperience", 0)
+    work_experience = affinda_data.get("workExperience", [])
+    
+    # Education analysis
+    education = affinda_data.get("education", [])
     
     return {
-        "score": round(score, 1),
-        "sections_found": found_sections,
-        "word_count": word_count,
-        "has_contact_info": contact_found,
-        "note": "Rule-based scoring (fallback)"
+        "score": score,
+        "sections_found": sections_found,
+        "has_contact_info": has_contact,
+        "skills_analysis": {
+            "total_skills": skills_count,
+            "top_skills": top_skills,
+            "skills_found": [skill.get("name") for skill in skills if skill.get("name")]
+        },
+        "experience_analysis": {
+            "total_years": experience_years,
+            "job_count": len(work_experience),
+            "recent_positions": [
+                {
+                    "title": exp.get("jobTitle"),
+                    "company": exp.get("organization"),
+                    "duration": exp.get("dates", {}).get("rawText")
+                }
+                for exp in work_experience[:3]
+            ]
+        },
+        "education_analysis": {
+            "degree_count": len(education),
+            "highest_degree": education[0].get("accreditation", {}).get("education") if education else None,
+            "institutions": [edu.get("organization") for edu in education if edu.get("organization")]
+        },
+        "note": "ATS scoring provided by Affinda API",
+        "affinda_ats_breakdown": ats_score  # Include Affinda's original ATS breakdown
     }
 
-# --- Main Scoring Function ---
-def get_resume_score(file_path: str):
+def calculate_fallback_score(affinda_data: dict):
     """
-    Try scoring methods in order:
-    1. Affinda API (professional ATS scoring)
-    2. Local rule-based (fallback)
+    Fallback scoring when Affinda doesn't provide direct ATS score
     """
-    # Try Affinda first
-    affinda_result = get_affinda_score(file_path)
-    if "score" in affinda_result:
-        return affinda_result
+    score = 50.0  # Base score
     
-    # Fallback to local scoring
-    return get_local_score(file_path)
+    # Education (20 points max)
+    if affinda_data.get("education"):
+        score += min(len(affinda_data["education"]) * 5, 20)
+    
+    # Work Experience (25 points max)
+    if affinda_data.get("workExperience"):
+        score += min(len(affinda_data["workExperience"]) * 5, 25)
+    
+    # Skills (15 points max)
+    if affinda_data.get("skills"):
+        score += min(len(affinda_data["skills"]) * 1.5, 15)
+    
+    # Contact Info (10 points)
+    if affinda_data.get("emails") or affinda_data.get("phoneNumbers"):
+        score += 10
+    
+    # Ensure score is within bounds
+    return max(0, min(100, round(score, 1)))
 
 # --- AI Enhancement ---
-def enhance_resume_with_gemini(text: str, job_description: str = None):
+def enhance_resume_with_gemini(affinda_data: dict, ats_score: float, job_description: str = None):
     if not GEMINI_API_KEY:
-        return text + "\n\n[AI Enhancement not available - API key missing]"
+        return "AI enhancement not available - Gemini API key missing"
     
-    prompt = f"""You are an expert ATS resume optimizer. Analyze and enhance this resume to maximize ATS compatibility and professional appeal:
-
-RESUME:
-{text}
-
-"""
-    if job_description:
-        prompt += f"""TARGET JOB DESCRIPTION:
-{job_description}
-
-Please tailor the resume specifically for this role while maintaining ATS compatibility."""
-
     try:
+        # Prepare structured data for AI enhancement
+        score_analysis = f"Current ATS Score: {ats_score}/100 (provided by Affinda)"
+        
+        resume_info = f"""
+        Resume Analysis from Affinda:
+        - Name: {affinda_data.get('name', {}).get('raw', 'Not found')}
+        - Email: {affinda_data.get('emails', ['Not found'])[0] if affinda_data.get('emails') else 'Not found'}
+        - Phone: {affinda_data.get('phoneNumbers', ['Not found'])[0] if affinda_data.get('phoneNumbers') else 'Not found'}
+        - Education: {len(affinda_data.get('education', []))} institutions found
+        - Experience: {len(affinda_data.get('workExperience', []))} positions, {affinda_data.get('totalYearsExperience', 0)} years
+        - Skills: {len(affinda_data.get('skills', []))} skills identified
+        - Summary: {affinda_data.get('summary', 'Not provided')}
+        - {score_analysis}
+        """
+        
+        prompt = f"""As an expert ATS resume optimizer, analyze this resume data and provide specific recommendations to improve the ATS score:
+
+        {resume_info}
+
+        Based on the Affinda ATS score of {ats_score}/100, provide:
+
+        1. QUICK WINS: Immediate improvements that could boost ATS score by 10+ points
+        2. SKILLS OPTIMIZATION: Missing or weak skills sections
+        3. KEYWORD OPTIMIZATION: ATS keywords to include
+        4. FORMATTING TIPS: ATS-friendly formatting recommendations
+        5. CONTENT GAPS: Missing sections or information
+
+        Focus on actionable, specific recommendations.
+        """
+        
+        if job_description:
+            prompt += f"\nTARGET JOB DESCRIPTION:\n{job_description}\n\nTailor recommendations specifically for this role and include relevant keywords from the job description."
+
         model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return response.text.strip()
+        
     except Exception as e:
         print(f"Gemini API error: {e}")
-        return text + "\n\n[Enhanced with AI - some features limited]"
+        return f"AI enhancement failed: {str(e)}"
 
 # --- Save Enhanced Resume ---
-def save_enhanced_resume(text: str, output_path: str):
+def save_enhanced_resume(affinda_data: dict, ats_score: float, recommendations: str, output_path: str):
     try:
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write("AI-ENHANCED RESUME\n")
-            f.write("=" * 60 + "\n\n")
-            f.write("Optimized for ATS compatibility and professional impact\n\n")
-            f.write(text)
+            f.write("AFFINDA RESUME ATS ANALYSIS REPORT\n")
+            f.write("=" * 50 + "\n\n")
+            
+            f.write("RESUME SUMMARY:\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"Name: {affinda_data.get('name', {}).get('raw', 'N/A')}\n")
+            f.write(f"Email: {affinda_data.get('emails', ['N/A'])[0] if affinda_data.get('emails') else 'N/A'}\n")
+            f.write(f"ATS Score: {ats_score}/100\n")
+            f.write(f"Experience: {affinda_data.get('totalYearsExperience', 0)} years\n")
+            f.write(f"Education: {len(affinda_data.get('education', []))} entries\n")
+            f.write(f"Skills: {len(affinda_data.get('skills', []))} identified\n\n")
+            
+            f.write("ATS ANALYSIS:\n")
+            f.write("-" * 15 + "\n")
+            f.write(f"Score provided by Affinda API\n")
+            f.write(f"Note: ATS scores evaluate resume parsing quality and ATS compatibility\n\n")
+            
+            f.write("AI OPTIMIZATION RECOMMENDATIONS:\n")
+            f.write("-" * 35 + "\n")
+            f.write(recommendations)
+            
+            f.write("\n\nDETAILED DATA (from Affinda):\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"Full analysis available via Affinda API\n")
+            
         return True
     except Exception as e:
         print(f"File creation failed: {e}")
@@ -210,10 +274,10 @@ def save_enhanced_resume(text: str, output_path: str):
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def root():
-    return {"message": "AI Resume ATS Optimizer API with Affinda Integration"}
+    return {"message": "AI Resume ATS Optimizer API with Affinda ATS Scoring"}
 
-@app.post("/optimize_resume/")
-async def optimize_resume(file: UploadFile = File(...), job_description: str = Form(None)):
+@app.post("/analyze_resume/")
+async def analyze_resume(file: UploadFile = File(...), job_description: str = Form(None)):
     try:
         if not file.filename.lower().endswith('.pdf'):
             return JSONResponse({"error": "Only PDF files are supported"}, status_code=400)
@@ -226,37 +290,51 @@ async def optimize_resume(file: UploadFile = File(...), job_description: str = F
             tmp.write(content)
             input_pdf = tmp.name
 
-        # Extract text
-        extracted_text = extract_text_from_pdf(input_pdf)
-        if not extracted_text or len(extracted_text.strip()) < 50:
-            return JSONResponse({"error": "Could not extract sufficient text from PDF"}, status_code=400)
+        # Parse resume with Affinda
+        print("Parsing resume with Affinda API...")
+        affinda_data = parse_resume_with_affinda(input_pdf)
+        
+        # Extract ATS score from Affinda
+        print("Extracting ATS score from Affinda...")
+        score_data = extract_affinda_ats_score(affinda_data)
 
-        # Get before score
-        print("Getting initial ATS score via Affinda...")
-        before_score_data = get_resume_score(input_pdf)
+        # Get AI recommendations based on Affinda score
+        print("Generating AI recommendations...")
+        recommendations = enhance_resume_with_gemini(affinda_data, score_data["score"], job_description)
 
-        # Enhance resume
-        print("Enhancing resume with AI...")
-        enhanced_text = enhance_resume_with_gemini(extracted_text, job_description)
-
-        # Save enhanced version
+        # Save analysis results
         enhanced_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt").name
-        save_enhanced_resume(enhanced_text, enhanced_file)
-
-        # Get after score (using same file since we can't easily rescore text)
-        after_score_data = get_resume_score(input_pdf)
+        save_success = save_enhanced_resume(
+            affinda_data, 
+            score_data["score"], 
+            recommendations, 
+            enhanced_file
+        )
 
         # Prepare response
         response_data = {
-            "before_score": before_score_data.get("score", 0),
-            "after_score": after_score_data.get("score", 0),
-            "score_improvement": round(after_score_data.get("score", 0) - before_score_data.get("score", 0), 1),
-            "before_details": before_score_data,
-            "after_details": after_score_data,
-            "enhanced_resume_url": f"/download/{Path(enhanced_file).name}",
-            "text_extracted": True,
-            "text_length": len(extracted_text),
-            "scoring_method": before_score_data.get("note", "Unknown")
+            "success": True,
+            "ats_score": score_data["score"],
+            "score_provider": "Affinda API",
+            "resume_analysis": {
+                "name": affinda_data.get("name", {}).get("raw"),
+                "email": affinda_data.get("emails", [None])[0],
+                "phone": affinda_data.get("phoneNumbers", [None])[0],
+                "experience_years": affinda_data.get("totalYearsExperience", 0),
+                "education_count": len(affinda_data.get("education", [])),
+                "experience_count": len(affinda_data.get("workExperience", [])),
+                "skills_count": len(affinda_data.get("skills", []))
+            },
+            "ats_breakdown": {
+                "sections_found": score_data["sections_found"],
+                "has_contact_info": score_data["has_contact_info"],
+                "skills_analysis": score_data["skills_analysis"],
+                "experience_analysis": score_data["experience_analysis"],
+                "education_analysis": score_data["education_analysis"]
+            },
+            "ai_recommendations_available": bool(recommendations and "failed" not in recommendations),
+            "analysis_report_url": f"/download/{Path(enhanced_file).name}" if save_success else None,
+            "note": score_data["note"]
         }
 
         # Cleanup
@@ -269,9 +347,9 @@ async def optimize_resume(file: UploadFile = File(...), job_description: str = F
 
     except Exception as e:
         import traceback
-        print("❌ Error optimizing resume:")
+        print("❌ Error analyzing resume:")
         traceback.print_exc()
-        return JSONResponse({"error": f"Optimization failed: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": f"Analysis failed: {str(e)}"}, status_code=500)
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
@@ -279,21 +357,26 @@ async def download_file(filename: str):
         file_path = os.path.join(tempfile.gettempdir(), filename)
         if not os.path.exists(file_path):
             return JSONResponse({"error": "File not found or expired"}, status_code=404)
-        return FileResponse(file_path, media_type="text/plain", filename="enhanced_resume.txt")
+        return FileResponse(file_path, media_type="text/plain", filename="resume_ats_analysis.txt")
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/health")
 async def health_check():
+    # Test Affinda connection
+    affinda_status = "configured" if AFFINDA_API_KEY else "missing"
+    gemini_status = "configured" if GEMINI_API_KEY else "missing"
+    
     return {
         "status": "healthy", 
         "services": {
-            "affinda": bool(AFFINDA_API_KEY),
-            "gemini": bool(GEMINI_API_KEY)
-            # "magicalapi": bool(MAGICAL_API_KEY)  # Removed
-        }
+            "affinda": affinda_status,
+            "gemini": gemini_status
+        },
+        "environment": "production" if os.getenv("RENDER") else "development"
     }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
