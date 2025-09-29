@@ -6,16 +6,12 @@
       "use": "@vercel/static-build"
     }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/frontend/dist/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/frontend/dist/index.html"
-    }
-  ],
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/frontend/dist/index.html"
+    }
+  ]
 }
