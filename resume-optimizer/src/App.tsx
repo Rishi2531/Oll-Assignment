@@ -88,7 +88,7 @@ const ResumeOptimizer: React.FC = () => {
         });
       }, 500);
 
-      const response = await fetch('http://127.0.0.1:8000/optimize_resume/', {
+      const response = await fetch('https://oll-assignment.onrender.com/optimize_resume/', {
         method: 'POST',
         body: formData,
       });
@@ -113,7 +113,7 @@ const ResumeOptimizer: React.FC = () => {
 
   const downloadEnhancedResume = () => {
     if (result?.enhanced_resume_url) {
-      window.open(`http://127.0.0.1:8000${result.enhanced_resume_url}`, '_blank');
+      window.open(`https://oll-assignment.onrender.com${result.enhanced_resume_url}`, '_blank');
     }
   };
 
