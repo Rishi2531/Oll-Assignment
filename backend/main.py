@@ -5,7 +5,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-
+import joblib
 import tempfile
 import pdfplumber
 from pdf2image import convert_from_path
